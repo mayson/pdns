@@ -92,14 +92,16 @@ void DNSProxy::go()
 //! look up qname target with r->qtype, plonk it in the answer section of 'r' with name aname
 bool DNSProxy::completePacket(std::unique_ptr<DNSPacket>& r, const DNSName& target,const DNSName& aname, const uint8_t scopeMask)
 {
+  Netmask realRemote = r->getRealRemote();
+
   if(r->d_tcp) {
     vector<DNSZoneRecord> ips;
     int ret1 = 0, ret2 = 0;
 
     if(r->qtype == QType::A || r->qtype == QType::ANY)
-      ret1 = stubDoResolve(target, QType::A, ips);
+      ret1 = stubDoResolve2(target, QType::A, realRemote, ips);
     if(r->qtype == QType::AAAA || r->qtype == QType::ANY)
-      ret2 = stubDoResolve(target, QType::AAAA, ips);
+      ret2 = stubDoResolve2(target, QType::AAAA, realRemote, ips);
 
     if(ret1 != RCode::NoError || ret2 != RCode::NoError) {
       g_log<<Logger::Error<<"Error resolving for "<<aname<<" ALIAS "<<target<<" over UDP, original query came in over TCP";
@@ -150,6 +152,15 @@ bool DNSProxy::completePacket(std::unique_ptr<DNSPacket>& r, const DNSName& targ
 
   vector<uint8_t> packet;
   DNSPacketWriter pw(packet, target, qtype);
+
+  DNSPacketWriter::optvect_t ednsOptions;
+  ednsOptions.clear();
+  EDNSSubnetOpts opt;
+  opt.source = realRemote;
+  ednsOptions.push_back(std::make_pair(EDNSOptionCode::ECS, makeEDNSSubnetOptsString(opt)));
+  pw.addOpt(512, 0, 0, ednsOptions);
+  pw.commit();
+
   pw.getHeader()->rd=true;
   pw.getHeader()->id=id ^ d_xor;
 

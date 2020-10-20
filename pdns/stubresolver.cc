@@ -173,6 +173,81 @@ int stubDoResolve(const DNSName& qname, uint16_t qtype, vector<DNSZoneRecord>& r
   return RCode::ServFail;
 }
 
+int stubDoResolve2(const DNSName& qname, uint16_t qtype, Netmask realRemote, vector<DNSZoneRecord>& ret)
+{
+  // ensure resolver gets always configured
+  if (!s_stubResolvConfigured) {
+    stubParseResolveConf();
+  }
+  // only check if resolvers come from local resolv.conf in the first place
+  if (s_localResolvConfMtime != 0) {
+        parseLocalResolvConf();
+  }
+  if (!resolversDefined())
+    return RCode::ServFail;
+
+  ReadLock l(&s_resolversForStubLock);
+  vector<uint8_t> packet;
+
+  DNSPacketWriter pw(packet, qname, qtype);
+
+  DNSPacketWriter::optvect_t ednsOptions;
+  ednsOptions.clear();
+  EDNSSubnetOpts opt;
+  opt.source = realRemote;
+  ednsOptions.push_back(std::make_pair(EDNSOptionCode::ECS, makeEDNSSubnetOptsString(opt)));
+  pw.addOpt(512, 0, 0, ednsOptions);
+  pw.commit();
+
+  pw.getHeader()->id=dns_random_uint16();
+  pw.getHeader()->rd=1;
+
+  string msg ="Doing stub resolving, using resolvers: ";
+  for (const auto& server : s_resolversForStub) {
+    msg += server.toString() + ", ";
+  }
+  g_log<<Logger::Debug<<msg.substr(0, msg.length() - 2)<<endl;
+
+  for(const ComboAddress& dest :  s_resolversForStub) {
+    Socket sock(dest.sin4.sin_family, SOCK_DGRAM);
+    sock.setNonBlocking();
+    sock.connect(dest);
+    sock.send(string(packet.begin(), packet.end()));
+
+    string reply;
+
+    waitForData(sock.getHandle(), 2, 0);
+    try {
+    retry:
+      sock.read(reply); // this calls recv
+      if(reply.size() > sizeof(struct dnsheader)) {
+        struct dnsheader d;
+        memcpy(&d, reply.c_str(), sizeof(d));
+        if(d.id != pw.getHeader()->id)
+          goto retry;
+      }
+    }
+    catch(...) {
+      continue;
+    }
+    MOADNSParser mdp(false, reply);
+    if(mdp.d_header.rcode == RCode::ServFail)
+      continue;
+
+    for(MOADNSParser::answers_t::const_iterator i=mdp.d_answers.begin(); i!=mdp.d_answers.end(); ++i) {
+      if(i->first.d_place == 1 && i->first.d_type==qtype) {
+        DNSZoneRecord zrr;
+        zrr.dr = i->first;
+        zrr.auth=true;
+        ret.push_back(zrr);
+      }
+    }
+    g_log<<Logger::Debug<<"Question got answered by "<<dest.toString()<<endl;
+    return mdp.d_header.rcode;
+  }
+  return RCode::ServFail;
+}
+
 int stubDoResolve(const DNSName& qname, uint16_t qtype, vector<DNSRecord>& ret) {
   vector<DNSZoneRecord> ret2;
   int res = stubDoResolve(qname, qtype, ret2);
