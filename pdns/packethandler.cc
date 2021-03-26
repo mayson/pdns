@@ -408,7 +408,7 @@ bool PacketHandler::getBestWildcard(DNSPacket& p, const DNSName &target, DNSName
         if (!rec) {
           continue;
         }
-        if(rec->d_type == QType::CNAME || rec->d_type == p.qtype.getCode() || (p.qtype.getCode() == QType::ANY && rec->d_type != QType::RRSIG)) {
+        if(rec->d_type == QType::CNAME || rec->d_type == QType::ALIAS || rec->d_type == p.qtype.getCode() || (p.qtype.getCode() == QType::ANY && rec->d_type != QType::RRSIG)) {
           //    noCache=true;
           DLOG(g_log<<"Executing Lua: '"<<rec->getCode()<<"'"<<endl);
           try {
@@ -429,7 +429,7 @@ bool PacketHandler::getBestWildcard(DNSPacket& p, const DNSName &target, DNSName
       }
       else
 #endif
-      if(rr.dr.d_type == p.qtype.getCode() || rr.dr.d_type == QType::CNAME || (p.qtype.getCode() == QType::ANY && rr.dr.d_type != QType::RRSIG)) {
+      if(rr.dr.d_type == p.qtype.getCode() || rr.dr.d_type == QType::CNAME || rr.dr.d_type == QType::ALIAS || (p.qtype.getCode() == QType::ANY && rr.dr.d_type != QType::RRSIG)) {
         ret->push_back(rr);
       }
 
@@ -1438,7 +1438,7 @@ std::unique_ptr<DNSPacket> PacketHandler::doQuestion(DNSPacket& p)
         if (!rec) {
           continue;
         }
-        if(rec->d_type == QType::CNAME || rec->d_type == p.qtype.getCode() || (p.qtype.getCode() == QType::ANY && rec->d_type != QType::RRSIG)) {
+        if(rec->d_type == QType::CNAME || rec->d_type == QType::ALIAS || rec->d_type == p.qtype.getCode() || (p.qtype.getCode() == QType::ANY && rec->d_type != QType::RRSIG)) {
           noCache=true;
           try {
             auto recvec=luaSynth(rec->getCode(), target, d_sd.qname, d_sd.domain_id, p, rec->d_type);
@@ -1451,6 +1451,14 @@ std::unique_ptr<DNSPacket> PacketHandler::doQuestion(DNSPacket& p)
               }
               if(rec->d_type == QType::CNAME && p.qtype.getCode() != QType::CNAME)
                 weRedirected = true;
+              else if(DP && rec->d_type == QType::ALIAS && (p.qtype.getCode() == QType::A || p.qtype.getCode() == QType::AAAA || p.qtype.getCode() == QType::ANY)) {
+                if (!d_doExpandALIAS) {
+                  g_log<<Logger::Info<<"ALIAS record found for "<<target<<", but ALIAS expansion is disabled."<<endl;
+                  continue;
+                }
+                haveAlias = getRR<ALIASRecordContent>(rr.dr)->d_content;
+                aliasScopeMask = rr.scopeMask;
+              }
               else
                 weDone = true;
             }
