@@ -621,6 +621,8 @@ stubquery_SOURCES = \
 	dnsparser.cc \
 	dnsrecords.cc \
 	dnswriter.cc \
+	ednsoptions.cc \
+	ednssubnet.cc \
 	iputils.cc \
 	logger.cc \
 	misc.cc \
